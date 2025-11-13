@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>船舶評分表重排工具</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 30px; }
+    .container { margin: auto; max-width: 900px; }
+    input[type=file] { margin-bottom: 1em; }
+    button { margin: 10px 0; }
+    table { border-collapse: collapse; margin-top:20px; }
+    th, td { border: 1px solid #666; padding: 4px 8px; }
+    th { background: #eee; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h2>船舶評分表重排與匯出工具</h2>
+  <ol>
+    <li>請上傳 Excel 檔案。檔案需有一個名為 <b>表單回應 1</b> 的工作表。</li>
+    <li>自動重新排列成指定格式，可預覽並下載新檔案。</li>
+  </ol>
+  <input type="file" id="fileInput" accept=".xlsx"/>
+  <button id="downloadBtn" disabled>匯出新檔案</button>
+  <div id="table-container"></div>
+</div>
+
+<script>
+function getDepartments() {
+    return ['ISM', 'TEC', 'OP', 'SUP', 'SMA', 'VCAT'];
+}
+function stripBrackets(name) {
+    if (typeof name !== 'string') return '';
+    return name.replace(/^\s*\[|\]\s*$/g, "").trim();
+}
+function calcAverage(arr) {
+    var nums = arr.filter(x => typeof x === 'number' && !isNaN(x));
+    if (nums.length === 0) return '';
+    return +(nums.reduce((a,b)=>a+b,0) / nums.length).toFixed(2);
+}
+function getStatus(arr) {
+    return arr.every(x => typeof x === 'number' && !isNaN(x)) ? 'O' : 'X';
+}
+
+document.getElementById('fileInput').addEventListener('change', function(e){
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+        const data = new Uint8Array(evt.target.result);
+        const workbook = XLSX.read(data, {type:'array'});
+        let sheet = workbook.Sheets['表單回應 1'];
+        if(!sheet){
+            alert('找不到「表單回應 1」工作表！');
+            return;
+        }
+        let rows = XLSX.utils.sheet_to_json(sheet, {header:1, blankrows:false});
+        if(rows.length === 0){
+            alert('檔案內容空白或格式錯誤');
+            return;
+        }
+
+        // 1. 船名欄位(表頭)
+        let header = rows[0];
+        let shipCols = [];
+        let shipNames = [];
+        for (let c = 0; c < header.length; c++) {
+            if (/^\s*\[.+\]\s*$/.test(header[c])) {
+                shipCols.push(c);
+                shipNames.push(header[c]); // 這裡保留原始格式
+            }
+        }
+        let departments = getDepartments();
+        let dataMap = {};
+        shipNames.forEach(ship => {
+            dataMap[ship]={};
+            departments.forEach(dep=>dataMap[ship][dep]=[]);
+        });
+        for(let r = 1; r < rows.length; r++) {
+            let row = rows[r];
+            if(!row) continue;
+            let dept = row[1];
+            if(!departments.includes(dept)) continue;
+            shipCols.forEach((colIdx, idx) => {
+                let val = row[colIdx];
+                let shipName = shipNames[idx];
+                if(val !== undefined && val !== '' && val !== null && !(typeof val==='string' && val.trim()==='')) {
+                    let score = Number(val);
+                    if(!isNaN(score)) {
+                        dataMap[shipName][dept].push(score);
+                    }
+                }
+            });
+        }
+        let resultData = [];
+        let newHeader = ['船名', ...departments, '平均', '狀態'];
+        resultData.push(newHeader);
+
+        // **這裡改成去中括號後存入欄位**
+        shipNames.forEach(ship => {
+            let row = [stripBrackets(ship)];
+            let depScores = [];
+            departments.forEach(dep=>{
+                let scoresArr = dataMap[ship][dep];
+                if (scoresArr.length === 0) {
+                    row.push('');
+                    depScores.push('');
+                } else {
+                    let avg = Math.round(scoresArr.reduce((a,b)=>a+b,0)/scoresArr.length*100)/100;
+                    row.push(avg);
+                    depScores.push(avg);
+                }
+            });
+            row.push(calcAverage(depScores));
+            row.push(getStatus(depScores));
+            resultData.push(row);
+        });
+
+        let tableHTML = '<table><thead><tr>' +
+            newHeader.map(h=>`<th>${h}</th>`).join('') +
+            '</tr></thead><tbody>';
+        for(let i=1;i<resultData.length;++i){
+            tableHTML += '<tr>'+ resultData[i].map(x=>`<td>${x}</td>`).join('') + '</tr>';
+        }
+        tableHTML += '</tbody></table>';
+        document.getElementById('table-container').innerHTML = tableHTML;
+        document.getElementById('downloadBtn').disabled = false;
+        window.__newTableData = resultData;
+    };
+    reader.readAsArrayBuffer(file);
+});
+
+document.getElementById('downloadBtn').addEventListener('click', function(){
+    if(!window.__newTableData) return;
+    let ws = XLSX.utils.aoa_to_sheet(window.__newTableData);
+    let wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '重排後表格');
+    XLSX.writeFile(wb, '新船舶評分表.xlsx');
+});
+</script>
+</body>
+</html>
