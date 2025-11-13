@@ -1,1 +1,1 @@
-# scores
+Reorganized the score table
